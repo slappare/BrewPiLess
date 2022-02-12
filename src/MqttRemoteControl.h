@@ -56,6 +56,7 @@ protected:
     char* _modePath;
     char* _beerSetPath;
     char* _fridgeSetPath;
+    char* _beerProfilePath;
     
     char* _reportBasePath;
     
@@ -69,7 +70,7 @@ protected:
 
     void _onConnect(void);
     void _onDisconnect(void);
-    void _onMessage(char* topic, uint8_t* payload, size_t len);
+    void _onMessage(char* topic, char* payload, size_t len);
     void _onPublish(uint16_t packetId);
     void _onModeChange(char* payload,size_t len);
 

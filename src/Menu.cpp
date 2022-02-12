@@ -99,14 +99,14 @@ bool blinkLoop(
 }
 
 void clearSettingText() {
-	display.printAt_P(0, rotaryEncoder.read(), STR_6SPACES);
+	display.printAt_P(0, 2-rotaryEncoder.read(), STR_6SPACES);
 }
 
 void settingChanged() {} // no -op - the only change is to update the display which happens already
 
 void settingSelected() {
 	switch(rotaryEncoder.read()){
-		case 0:
+		case 2:
 			menu.pickMode();
 			return;
 		case 1:
@@ -115,7 +115,7 @@ void settingSelected() {
 			display.printMode();
 			menu.pickBeerSetting();
 			return;
-		case 2:
+		case 0:
 			// switch to fridge constant, because fridge setting will be set through display
 			tempControl.setMode(MODE_FRIDGE_CONSTANT);
 			display.printMode();
@@ -125,7 +125,7 @@ void settingSelected() {
 }
 
 void Menu::pickSettingToChangeLoop(void) {
-	rotaryEncoder.setRange(0, 0, 2); // mode setting, beer temp, fridge temp
+	rotaryEncoder.setRange(2, 0, 2); // mode setting, beer temp, fridge temp
 	blinkLoop(
 		settingChanged,
 		display.printStationaryText,

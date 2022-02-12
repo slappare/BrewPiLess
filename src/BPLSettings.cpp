@@ -1018,6 +1018,7 @@ String BPLSettings::jsonPressureMonitorSettings(void){
 #define ModePathKey "mode"
 #define BeerSetPathKey "beerset"
 #define FridgeSetPathKey "fridgeset"
+#define BeerProfilePathKey "beerprofile"
 #define PtcPathKey "ptc"
 #define CapPathKey "cap"
 
@@ -1067,6 +1068,12 @@ String BPLSettings::jsonMqttRemoteControlSettings(void){
 		char* setpath=(char*) (settings->_strings + settings->fridgeSetPathOffset);
 		DBG_PRINTF("fridgeSet path:%s offset:%d\n",setpath, settings->fridgeSetPathOffset);
 		root[FridgeSetPathKey] = setpath;
+	}
+
+	if(settings->beerProfilePathOffset){
+		char* setpath=(char*) (settings->_strings + settings->beerProfilePathOffset);
+		DBG_PRINTF("fridgeSet path:%s offset:%d\n",setpath, settings->beerProfilePathOffset);
+		root[BeerProfilePathKey] = setpath;
 	}
 
 
@@ -1183,6 +1190,7 @@ bool BPLSettings::dejsonMqttRemoteControlSettings(String json){
 	if(!(ptr=copyIfExist(root,ModePathKey,settings->modePathOffset,ptr,base))) return false;
 	if(!(ptr=copyIfExist(root,BeerSetPathKey,settings->beerSetPathOffset,ptr,base))) return false;
 	if(!(ptr=copyIfExist(root,FridgeSetPathKey,settings->fridgeSetPathOffset,ptr,base))) return false;
+	if(!(ptr=copyIfExist(root,BeerProfilePathKey,settings->beerProfilePathOffset,ptr,base))) return false;
 
 	if(!(ptr=copyIfExist(root,ReportBasePathKey,settings->reportBasePathOffset,ptr,base))) return false;
 

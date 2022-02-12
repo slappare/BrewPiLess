@@ -1,3 +1,8 @@
+# In the fork
+
+* Added MQTT -> Beer profile
+* Ugly fix for menu buttons beeing upside down on OLED.
+
 # BrewPiLess
  **Note: ALL BPL settings will be gone after upgrading to v3.0**
 

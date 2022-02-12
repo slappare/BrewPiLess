@@ -41,7 +41,9 @@
 #if ARDUINOJSON_VERSION_MAJOR == 5
   #define ARDUINOJSON_5_COMPATIBILITY
 #else
-  #define DYNAMIC_JSON_DOCUMENT_SIZE  1024
+  #ifndef DYNAMIC_JSON_DOCUMENT_SIZE
+    #define DYNAMIC_JSON_DOCUMENT_SIZE  1024
+  #endif
 #endif
 
 constexpr const char* JSON_MIMETYPE = "application/json";
@@ -101,7 +103,7 @@ class AsyncJsonResponse: public AsyncAbstractResponse {
         _root = _jsonBuffer.createObject();
     }
 #else
-    AsyncJsonResponse(size_t maxJsonBufferSize = DYNAMIC_JSON_DOCUMENT_SIZE, bool isArray=false) : _jsonBuffer(maxJsonBufferSize), _isValid{false} {
+    AsyncJsonResponse(bool isArray=false, size_t maxJsonBufferSize = DYNAMIC_JSON_DOCUMENT_SIZE) : _jsonBuffer(maxJsonBufferSize), _isValid{false} {
       _code = 200;
       _contentType = JSON_MIMETYPE;
       if(isArray)
@@ -140,22 +142,32 @@ class AsyncJsonResponse: public AsyncAbstractResponse {
     }
 };
 
-#ifdef ARDUINOJSON_5_COMPATIBILITY
 class PrettyAsyncJsonResponse: public AsyncJsonResponse {	
 public:
-	PrettyAsyncJsonResponse (bool isArray=false) : AsyncJsonResponse{isArray} {}	
+#ifdef ARDUINOJSON_5_COMPATIBILITY
+	PrettyAsyncJsonResponse (bool isArray=false) : AsyncJsonResponse{isArray} {}
+#else
+	PrettyAsyncJsonResponse (bool isArray=false, size_t maxJsonBufferSize = DYNAMIC_JSON_DOCUMENT_SIZE) : AsyncJsonResponse{isArray, maxJsonBufferSize} {}
+#endif
 	size_t setLength () {
+#ifdef ARDUINOJSON_5_COMPATIBILITY
 		_contentLength = _root.measurePrettyLength ();
+#else
+		_contentLength = measureJsonPretty(_root);
+#endif
 		if (_contentLength) {_isValid = true;}
 		return _contentLength;
 	}
 	size_t _fillBuffer (uint8_t *data, size_t len) {
 		ChunkPrint dest (data, _sentLength, len);
+#ifdef ARDUINOJSON_5_COMPATIBILITY
 		_root.prettyPrintTo (dest);
+#else
+		serializeJsonPretty(_root, dest);
+#endif
 		return len;
 	}
 };
-#endif
 
 typedef std::function<void(AsyncWebServerRequest *request, JsonVariant &json)> ArJsonRequestHandlerFunction;
 

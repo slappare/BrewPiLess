@@ -221,6 +221,8 @@ typedef struct _MqttRemoteControlSettings{
     uint16_t  capControlPathOffset;
     uint16_t  ptcPathOffset;
     uint16_t  fridgeSetPathOffset;
+    uint16_t  beerProfilePathOffset;
+
 
     uint16_t  reportBasePathOffset;
     uint16_t  reportPeriod;

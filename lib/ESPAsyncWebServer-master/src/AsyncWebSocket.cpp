@@ -24,18 +24,7 @@
 #include <libb64/cencode.h>
 
 #ifndef ESP8266
-extern "C" {
-typedef struct {
-    uint32_t state[5];
-    uint32_t count[2];
-    unsigned char buffer[64];
-} SHA1_CTX;
-
-void SHA1Transform(uint32_t state[5], const unsigned char buffer[64]);
-void SHA1Init(SHA1_CTX* context);
-void SHA1Update(SHA1_CTX* context, const unsigned char* data, uint32_t len);
-void SHA1Final(unsigned char digest[20], SHA1_CTX* context);
-}
+#include "mbedtls/sha1.h"
 #else
 #include <Hash.h>
 #endif
@@ -274,7 +263,6 @@ class AsyncWebSocketControl {
     uint8_t opcode(){ return _opcode; }
     uint8_t len(){ return _len + 2; }
     size_t send(AsyncClient *client){
-      if(_finished) return 0;
       _finished = true;
       return webSocketSendFrame(client, true, _opcode & 0x0F, _mask, _data, _len);
     }
@@ -322,6 +310,7 @@ AsyncWebSocketBasicMessage::~AsyncWebSocketBasicMessage() {
 }
 
  void AsyncWebSocketBasicMessage::ack(size_t len, uint32_t time)  {
+   (void)time;
   _acked += len;
   if(_sent == _len && _acked == _ack){
     _status = WS_MSG_SENT;
@@ -417,6 +406,7 @@ AsyncWebSocketMultiMessage::~AsyncWebSocketMultiMessage() {
 }
 
  void AsyncWebSocketMultiMessage::ack(size_t len, uint32_t time)  {
+   (void)time;
   _acked += len;
   if(_sent >= _len && _acked >= _ack){
     _status = WS_MSG_SENT;
@@ -483,17 +473,18 @@ AsyncWebSocketClient::AsyncWebSocketClient(AsyncWebServerRequest *request, Async
   _clientId = _server->_getNextId();
   _status = WS_CONNECTED;
   _pstate = 0;
+  _partialHeaderLen = 0;
   _lastMessageTime = millis();
   _keepAlivePeriod = 0;
   _client->setRxTimeout(0);
-  _client->onError([](void *r, AsyncClient* c, int8_t error){ ((AsyncWebSocketClient*)(r))->_onError(error); }, this);
-  _client->onAck([](void *r, AsyncClient* c, size_t len, uint32_t time){ ((AsyncWebSocketClient*)(r))->_onAck(len, time); }, this);
+  _client->onError([](void *r, AsyncClient* c, int8_t error){ (void)c; ((AsyncWebSocketClient*)(r))->_onError(error); }, this);
+  _client->onAck([](void *r, AsyncClient* c, size_t len, uint32_t time){ (void)c; ((AsyncWebSocketClient*)(r))->_onAck(len, time); }, this);
   _client->onDisconnect([](void *r, AsyncClient* c){ ((AsyncWebSocketClient*)(r))->_onDisconnect(); delete c; }, this);
-  _client->onTimeout([](void *r, AsyncClient* c, uint32_t time){ ((AsyncWebSocketClient*)(r))->_onTimeout(time); }, this);
-  _client->onData([](void *r, AsyncClient* c, void *buf, size_t len){ ((AsyncWebSocketClient*)(r))->_onData(buf, len); }, this);
-  _client->onPoll([](void *r, AsyncClient* c){ ((AsyncWebSocketClient*)(r))->_onPoll(); }, this);
+  _client->onTimeout([](void *r, AsyncClient* c, uint32_t time){ (void)c; ((AsyncWebSocketClient*)(r))->_onTimeout(time); }, this);
+  _client->onData([](void *r, AsyncClient* c, void *buf, size_t len){ (void)c; ((AsyncWebSocketClient*)(r))->_onData(buf, len); }, this);
+  _client->onPoll([](void *r, AsyncClient* c){ (void)c; ((AsyncWebSocketClient*)(r))->_onPoll(); }, this);
   _server->_addClient(this);
-  _server->_handleEvent(this, WS_EVT_CONNECT, NULL, NULL, 0);
+  _server->_handleEvent(this, WS_EVT_CONNECT, request, NULL, 0);
   delete request;
 }
 
@@ -608,6 +599,7 @@ void AsyncWebSocketClient::ping(uint8_t *data, size_t len){
 void AsyncWebSocketClient::_onError(int8_t){}
 
 void AsyncWebSocketClient::_onTimeout(uint32_t time){
+  (void)time;
   _client->close(true);
 }
 
@@ -620,30 +612,107 @@ void AsyncWebSocketClient::_onData(void *pbuf, size_t plen){
   _lastMessageTime = millis();
   uint8_t *data = (uint8_t*)pbuf;
   while(plen > 0){
-    if(!_pstate){
-      const uint8_t *fdata = data;
+    if(!_pstate) {
+      ssize_t dataPayloadOffset = 0;
+      const uint8_t *headerBuf = data;
+
+      // plen is backed up to initialPlen because, in case we receive a partial header, we would like to undo all of our
+      // parsing and copy all of what we have of the header into a buffer for later use.
+      // plen is modified during the parsing attempt, so if we don't back it up we won't know how much we need to copy.
+      // partialHeaderLen is also backed up for the same reason.
+      size_t initialPlen = plen;
+      size_t partialHeaderLen = 0;
+
+      if (_partialHeaderLen > 0) {
+        // We previously received a truncated header. Recover it by doing the following:
+        // - Copy the new header chunk into the previous partial header, filling the buffer. It is allocated as a
+        //   buffer in a class field.
+        // - Change *headerBuf to point to said buffer
+        // - Update the length counters so that:
+        //   - The initialPlen and plen, which refer to the length of the remaining packet data, also accounts for the
+        //     previously received truncated header
+        //   - The dataPayloadOffset, which is the offset after the header at which the payload begins, so that it
+        //     refers to a point potentially before the beginning of the buffer. As we parse the header we increment it,
+        //     and we can pretty much guarantee it will go back to being positive unless there is a major bug.
+        //   - The class _partialHeaderLen is back to zero since we took ownership of the contained data.
+        memcpy(_partialHeader + _partialHeaderLen, data,
+               std::min(plen, (size_t) WS_MAX_HEADER_LEN - _partialHeaderLen));
+        headerBuf = _partialHeader;
+        initialPlen += _partialHeaderLen;
+        plen += _partialHeaderLen;
+        dataPayloadOffset -= _partialHeaderLen;
+        partialHeaderLen = _partialHeaderLen;
+
+        _partialHeaderLen = 0;
+      }
+
+      // The following series of gotos could have been a try-catch but we are likely being built with -fno-exceptions
+      if (plen < 2)
+        goto _exceptionHandleFailPartialHeader;
+
       _pinfo.index = 0;
-      _pinfo.final = (fdata[0] & 0x80) != 0;
-      _pinfo.opcode = fdata[0] & 0x0F;
-      _pinfo.masked = (fdata[1] & 0x80) != 0;
-      _pinfo.len = fdata[1] & 0x7F;
-      data += 2;
+      _pinfo.final = (headerBuf[0] & 0x80) != 0;
+      _pinfo.opcode = headerBuf[0] & 0x0F;
+      _pinfo.masked = (headerBuf[1] & 0x80) != 0;
+      _pinfo.len = headerBuf[1] & 0x7F;
+      dataPayloadOffset += 2;
       plen -= 2;
-      if(_pinfo.len == 126){
-        _pinfo.len = fdata[3] | (uint16_t)(fdata[2]) << 8;
-        data += 2;
+
+      if (_pinfo.len == 126) {
+        if (plen < 2)
+          goto _exceptionHandleFailPartialHeader;
+
+        _pinfo.len = headerBuf[3] | (uint16_t)(headerBuf[2]) << 8;
+        dataPayloadOffset += 2;
         plen -= 2;
-      } else if(_pinfo.len == 127){
-        _pinfo.len = fdata[9] | (uint16_t)(fdata[8]) << 8 | (uint32_t)(fdata[7]) << 16 | (uint32_t)(fdata[6]) << 24 | (uint64_t)(fdata[5]) << 32 | (uint64_t)(fdata[4]) << 40 | (uint64_t)(fdata[3]) << 48 | (uint64_t)(fdata[2]) << 56;
-        data += 8;
+      } else if (_pinfo.len == 127) {
+        if (plen < 8)
+          goto _exceptionHandleFailPartialHeader;
+
+        _pinfo.len = headerBuf[9] | (uint16_t)(headerBuf[8]) << 8 | (uint32_t)(headerBuf[7]) << 16 |
+                     (uint32_t)(headerBuf[6]) << 24 | (uint64_t)(headerBuf[5]) << 32 | (uint64_t)(headerBuf[4]) << 40 |
+                     (uint64_t)(headerBuf[3]) << 48 | (uint64_t)(headerBuf[2]) << 56;
+        dataPayloadOffset += 8;
         plen -= 8;
       }
 
-      if(_pinfo.masked){
-        memcpy(_pinfo.mask, data, 4);
-        data += 4;
+      if (_pinfo.masked) {
+        if (plen < 4)
+          goto _exceptionHandleFailPartialHeader;
+
+        memcpy(_pinfo.mask, headerBuf + dataPayloadOffset + partialHeaderLen, 4);
+        dataPayloadOffset += 4;
         plen -= 4;
       }
+
+      // Yes I know the control flow here isn't 100% legible but we must support -fno-exceptions.
+      // If we got to this point it means we did NOT receive a truncated header, therefore we can skip the exception
+      // handling.
+      // Control flow resumes after the following block.
+      goto _headerParsingSuccessful;
+
+      // We DID receive a truncated header:
+      // - We copy it to our buffer and set the _partialHeaderLen
+      // - We return early
+      // This will trigger the partial recovery at the next call of this method, once more data is received and we have
+      // a full header.
+      _exceptionHandleFailPartialHeader:
+      {
+        if (initialPlen <= WS_MAX_HEADER_LEN) {
+          // If initialPlen > WS_MAX_HEADER_LEN there must be something wrong with this code. It should never happen but
+          // but it's better safe than sorry.
+          memcpy(_partialHeader, headerBuf, initialPlen * sizeof(uint8_t));
+          _partialHeaderLen = initialPlen;
+        } else {
+          DEBUGF("[AsyncWebSocketClient::_onData] initialPlen (= %d) > WS_MAX_HEADER_LEN (= %d)\n", initialPlen,
+                 WS_MAX_HEADER_LEN);
+        }
+        return;
+      }
+
+      _headerParsingSuccessful:
+
+      data += dataPayloadOffset;
     }
 
     const size_t datalen = std::min((size_t)(_pinfo.len - _pinfo.index), plen);
@@ -681,6 +750,7 @@ void AsyncWebSocketClient::_onData(void *pbuf, size_t plen){
           _client->close(true);
         } else {
           _status = WS_DISCONNECTING;
+          _client->ackLater();
           _queueControl(new AsyncWebSocketControl(WS_DISCONNECT, data, datalen));
         }
       } else if(_pinfo.opcode == WS_PING){
@@ -711,6 +781,7 @@ size_t AsyncWebSocketClient::printf(const char *format, ...) {
   va_start(arg, format);
   char* temp = new char[MAX_PRINTF_LEN];
   if(!temp){
+    va_end(arg);
     return 0;
   }
   char* buffer = temp;
@@ -741,6 +812,7 @@ size_t AsyncWebSocketClient::printf_P(PGM_P formatP, ...) {
   va_start(arg, formatP);
   char* temp = new char[MAX_PRINTF_LEN];
   if(!temp){
+    va_end(arg);
     return 0;
   }
   char* buffer = temp;
@@ -922,6 +994,13 @@ void AsyncWebSocket::closeAll(uint16_t code, const char * message){
   for(const auto& c: _clients){
     if(c->status() == WS_CONNECTED)
       c->close(code, message);
+  }
+}
+
+void AsyncWebSocket::cleanupClients(uint16_t maxClients)
+{
+  if (count() > maxClients){
+    _clients.front()->close();
   }
 }
 
@@ -1227,6 +1306,9 @@ void AsyncWebSocket::_cleanBuffers()
   }
 }
 
+AsyncWebSocket::AsyncWebSocketClientLinkedList AsyncWebSocket::getClients() const {
+  return _clients;
+}
 
 /*
  * Response to Web Socket request - sends the authorization and detaches the TCP Client from the web server
@@ -1253,10 +1335,12 @@ AsyncWebSocketResponse::AsyncWebSocketResponse(const String& key, AsyncWebSocket
   sha1(key + WS_STR_UUID, hash);
 #else
   (String&)key += WS_STR_UUID;
-  SHA1_CTX ctx;
-  SHA1Init(&ctx);
-  SHA1Update(&ctx, (const unsigned char*)key.c_str(), key.length());
-  SHA1Final(hash, &ctx);
+  mbedtls_sha1_context ctx;
+  mbedtls_sha1_init(&ctx);
+  mbedtls_sha1_starts_ret(&ctx);
+  mbedtls_sha1_update_ret(&ctx, (const unsigned char*)key.c_str(), key.length());
+  mbedtls_sha1_finish_ret(&ctx, hash);
+  mbedtls_sha1_free(&ctx);
 #endif
   base64_encodestate _state;
   base64_init_encodestate(&_state);
@@ -1280,6 +1364,7 @@ void AsyncWebSocketResponse::_respond(AsyncWebServerRequest *request){
 }
 
 size_t AsyncWebSocketResponse::_ack(AsyncWebServerRequest *request, size_t len, uint32_t time){
+  (void)time;
   if(len){
     new AsyncWebSocketClient(request, _server);
   }

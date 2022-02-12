@@ -23,10 +23,27 @@
 #include <Arduino.h>
 #ifdef ESP32
 #include <AsyncTCP.h>
+#define SSE_MAX_QUEUED_MESSAGES 32
 #else
 #include <ESPAsyncTCP.h>
+#define SSE_MAX_QUEUED_MESSAGES 8
 #endif
 #include <ESPAsyncWebServer.h>
+
+#include "AsyncWebSynchronization.h"
+
+#ifdef ESP8266
+#include <Hash.h>
+#ifdef CRYPTO_HASH_h // include Hash.h from espressif framework if the first include was from the crypto library
+#include <../src/Hash.h>
+#endif
+#endif
+
+#ifdef ESP32
+#define DEFAULT_MAX_SSE_CLIENTS 8
+#else
+#define DEFAULT_MAX_SSE_CLIENTS 4
+#endif
 
 class AsyncEventSource;
 class AsyncEventSourceResponse;
@@ -55,6 +72,8 @@ class AsyncEventSourceClient {
     AsyncEventSource *_server;
     uint32_t _lastId;
     LinkedList<AsyncEventSourceMessage *> _messageQueue;
+    // ArFi 2020-08-27 for protecting/serializing _messageQueue
+    AsyncPlainLock _lockmq;
     void _queueMessage(AsyncEventSourceMessage *dataMessage);
     void _runQueue();
 
@@ -65,11 +84,12 @@ class AsyncEventSourceClient {
 
     AsyncClient* client(){ return _client; }
     void close();
-    void write(const char * message, size_t len);
     void send(const char *message, const char *event=NULL, uint32_t id=0, uint32_t reconnect=0);
     bool connected() const { return (_client != NULL) && _client->connected(); }
     uint32_t lastId() const { return _lastId; }
+    size_t  packetsWaiting() const;
 
+    void _write(const char * message, size_t len);
     //system callbacks (do not call)
     void _onAck(size_t len, uint32_t time);
     void _onPoll(); 
@@ -81,7 +101,11 @@ class AsyncEventSource: public AsyncWebHandler {
   private:
     String _url;
     LinkedList<AsyncEventSourceClient *> _clients;
+    // Same as for individual messages, protect mutations of _clients list
+    // since simultaneous access from different tasks is possible
+    AsyncWebLock _client_queue_lock;
     ArEventHandlerFunction _connectcb;
+
   public:
     AsyncEventSource(const String& url);
     ~AsyncEventSource();
@@ -90,7 +114,8 @@ class AsyncEventSource: public AsyncWebHandler {
     void close();
     void onConnect(ArEventHandlerFunction cb);
     void send(const char *message, const char *event=NULL, uint32_t id=0, uint32_t reconnect=0);
-    size_t count() const; //number clinets connected
+    size_t count() const; //number clients connected
+    size_t  avgPacketsWaiting() const;
 
     //system callbacks (do not call)
     void _addClient(AsyncEventSourceClient * client);

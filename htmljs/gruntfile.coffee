@@ -9,7 +9,7 @@ module.exports = (grunt) ->
   grunt.loadNpmTasks 'grunt-contrib-sass'
   grunt.loadNpmTasks 'grunt-contrib-uglify'
   grunt.loadNpmTasks 'grunt-contrib-watch'
-  grunt.loadNpmTasks 'grunt-postcss'
+  grunt.loadNpmTasks '@lodder/grunt-postcss'
   grunt.loadNpmTasks 'grunt-processhtml'
   grunt.loadNpmTasks 'grunt-multi-lang-site-generator'
 
@@ -131,7 +131,8 @@ module.exports = (grunt) ->
 
     postcss:
       options:
-        map: true
+        map: 
+          inline: true,
         processors: [ require('autoprefixer') ]
       dist:
         src: 'build/*.css'
@@ -151,27 +152,31 @@ module.exports = (grunt) ->
 
     processhtml:
       dist:
+        options:
+          data:
+            message: 'Whatisthis'
         files: [
-          'build/index.tmpl.html': ['src/index.tmpl.html']
-          'build/index_s.tmpl.html': ['src/index_s.tmpl.html']
-          'build/control.tmpl.html': ['src/control.tmpl.html']
-          'build/control_s.tmpl.html': ['src/control_s.tmpl.html']
-          'build/setup.tmpl.html': ['src/setup.tmpl.html']
-          'build/gravity.tmpl.html': ['src/gravity.tmpl.html']
-          'build/gravity_e32.tmpl.html': ['src/gravity_e32.tmpl.html']
-          'build/logging.tmpl.html': ['src/logging.tmpl.html']
+          'build/index.tmpl.html': ['src/index.tmpl.html'],
+          'build/index_s.tmpl.html': ['src/index_s.tmpl.html'],
+          'build/control.tmpl.html': ['src/control.tmpl.html'],
+          'build/control_s.tmpl.html': ['src/control_s.tmpl.html'],
+          'build/setup.tmpl.html': ['src/setup.tmpl.html'],
+          'build/gravity.tmpl.html': ['src/gravity.tmpl.html'],
+          'build/gravity_e32.tmpl.html': ['src/gravity_e32.tmpl.html'],
+          'build/logging.tmpl.html': ['src/logging.tmpl.html'],
           'build/config.tmpl.html': ['src/config.tmpl.html'],          
-          'build/pressure.tmpl.html': ['src/pressure.tmpl.html'],          
-          'build/BPLLogViewer.tmpl.html': ['src/BPLLogViewer.tmpl.html']
-          'build/BPLogWebViewer.tmpl.html': ['src/BPLogWebViewer.tmpl.html']
-          'build/lcd.html' : ['src/lcd.html']
-          'build/classic-lcd.html' : ['src/classic-lcd.html']
+          'build/pressure.tmpl.html': ['src/pressure.tmpl.html'],    
+          'build/BPLLogViewer.tmpl.html': ['src/BPLLogViewer.tmpl.html'],
+          'build/BPLogWebViewer.tmpl.html': ['src/BPLogWebViewer.tmpl.html'],
+          'build/lcd.html' : ['src/lcd.html'],
+          'build/classic-lcd.html' : ['src/classic-lcd.html'],
         ]
+        
   
     multi_lang_site_generator:
       default:
           options:
-            vocabs:           ['english','chinese','spanish','portuguese-br', 'slovak', 'italian', 'norwegian']
+            vocabs:           ['english']
             vocab_directory:  'src/locales'
             output_directory: 'dist'
             template_directory: 'dist'

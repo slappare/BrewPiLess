@@ -44,7 +44,7 @@ MqttRemoteControl::MqttRemoteControl(){
         this->_onDisconnect();
     });
     _client.onMessage([this](char* topic, char* payload, AsyncMqttClientMessageProperties properties, size_t len, size_t index, size_t total){
-        this->_onMessage(topic,(uint8_t*)payload,len);
+        this->_onMessage(topic,payload,len);
     });
 
     _client.onPublish([this](uint16_t pid){
@@ -243,6 +243,7 @@ void MqttRemoteControl::_loadConfig()
         _modePath = settings->modePathOffset? (char*)settings->_strings + settings->modePathOffset:NULL;
         _beerSetPath = settings->beerSetPathOffset? (char*)settings->_strings + settings->beerSetPathOffset:NULL;
         _fridgeSetPath = settings->fridgeSetPathOffset? (char*)settings->_strings + settings->fridgeSetPathOffset:NULL;
+        _beerProfilePath = settings->beerProfilePathOffset? (char*)settings->_strings + settings->beerProfilePathOffset:NULL;
         
 #if EanbleParasiteTempControl
         _ptcPath = settings->ptcPathOffset? (char*)settings->_strings + settings->ptcPathOffset:NULL;
@@ -257,6 +258,7 @@ void MqttRemoteControl::_loadConfig()
         if(_modePath) DBG_PRINTF("_modePath:%s\n",_modePath);
         if(_beerSetPath) DBG_PRINTF("_setTempPath:%s\n",_beerSetPath);
         if(_fridgeSetPath) DBG_PRINTF("_setTempPath:%s\n",_fridgeSetPath);
+        if(_beerProfilePath) DBG_PRINTF("_setTempPath:%s\n",_beerProfilePath);
 
         #if EanbleParasiteTempControl
 
@@ -321,6 +323,14 @@ void MqttRemoteControl::_onConnect(void){
         }
     }
 
+    if(_beerProfilePath){
+        if(_client.subscribe(_beerProfilePath, 1)){
+            DBG_PRINTF("MQTT:Subscribing %s\n",_beerProfilePath);
+        }else{
+            DBG_PRINTF("MQTT:Subscribing %s FAILED\n",_beerProfilePath);
+        }
+    }
+
 
     #if EanbleParasiteTempControl
     if(_ptcPath){
@@ -350,15 +360,20 @@ void MqttRemoteControl::_onDisconnect(void){
 }
 
 
-void MqttRemoteControl::_onMessage(char* topic, uint8_t* payload, size_t len) {
+void MqttRemoteControl::_onMessage(char* topic, char* payload, size_t len) {
     DBG_PRINTF("MQTT:rcv %s\n",topic);
 
     if(strcmp(topic, _modePath) ==0){
-        this->_onModeChange((char*)payload,len);
+        this->_onModeChange(payload,len);
     }else if(strcmp(topic, _beerSetPath) ==0){
-        this->_onSettingTempChange(true,(char*)payload,len);
+        this->_onSettingTempChange(true,payload,len);
     }else if(strcmp(topic, _fridgeSetPath) ==0){
-        this->_onSettingTempChange(false,(char*)payload,len);
+        this->_onSettingTempChange(false,payload,len);
+    }else if(strcmp(topic, _beerProfilePath)==0){
+        if(theSettings.dejsonBeerProfile(payload)){
+            theSettings.save();
+            brewKeeper.profileUpdated();
+        }
     }
 #if EanbleParasiteTempControl
     else if(strcmp(topic, _ptcPath) ==0){

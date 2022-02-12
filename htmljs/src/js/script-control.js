@@ -624,7 +624,7 @@ var PL = {
 /* end of PL*/
 var BrewPiSetting = {
     valid: false,
-    maxDegree: 30,
+    maxDegree: 40,
     minDegree: 0,
     tempUnit: 'C'
 };
@@ -784,7 +784,7 @@ var modekeeper = {
                     mime: "application/json",
                     data: JSON.stringify(data),
                     success: function(d) {
-                        BWF.send("j{mode:p}");
+                        ("j{mode:p}");
                     },
                     fail: function(d) {
                         alert("<%= failed %>:" + d);
